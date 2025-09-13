@@ -1,0 +1,129 @@
+import kotlin.Boolean;
+import kotlinx.datetime.LocalDateTime;
+
+CREATE TABLE IF NOT EXISTS notes(
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT AS LocalDateTime NOT NULL,
+    updated_at TEXT AS LocalDateTime NOT NULL,
+    api_id INTEGER DEFAULT NULL UNIQUE,
+    is_synced INTEGER AS Boolean DEFAULT FALSE,
+    is_deleted INTEGER AS Boolean DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS notes_created_at ON notes(created_at);
+CREATE INDEX IF NOT EXISTS notes_is_deleted ON notes(is_deleted);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts4(
+    title,
+    content
+);
+
+CREATE TRIGGER IF NOT EXISTS notes_after_insert AFTER INSERT ON notes BEGIN
+  INSERT INTO notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_after_delete AFTER DELETE ON notes BEGIN
+    DELETE FROM notes_fts WHERE rowid = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_after_update
+AFTER UPDATE ON notes
+BEGIN
+    DELETE FROM notes_fts WHERE rowid = old.id;
+    INSERT INTO notes_fts (rowid, title, content)
+        SELECT new.id, new.title, new.content
+        WHERE new.is_deleted = FALSE;
+
+END;
+
+searchNotesInital:
+SELECT
+   n.*
+FROM notes_fts
+JOIN notes AS n ON n.id = notes_fts.rowid
+WHERE notes_fts MATCH ?
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+
+searchNotesAfterCursor:
+SELECT
+    n.*
+FROM notes_fts
+JOIN notes AS n ON n.id = notes_fts.rowid
+WHERE notes_fts MATCH ?
+AND (created_at, id) < (? , ?)
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+
+createLocalNote:
+INSERT INTO notes(title, content, created_at, updated_at, is_synced)
+VALUES (?, ?, ?, ?, FALSE);
+
+createNoteFromAPI:
+INSERT INTO notes(title, content, created_at, updated_at, api_id, is_synced)
+VALUES (?, ?, ?, ?, ?, TRUE);
+
+getAllNotes:
+SELECT *
+FROM notes
+ORDER BY id DESC;
+
+getNotesPaginated:
+SELECT *
+FROM notes
+WHERE (created_at, id) < (?, ?) AND is_deleted = FALSE
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+
+getNotesPaginatedInitial:
+SELECT *
+FROM notes
+WHERE is_deleted = FALSE
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+
+getNoteById:
+SELECT *
+FROM notes
+WHERE id = ?;
+
+updateNoteById:
+UPDATE notes
+SET title = ?, content = ?, updated_at = ?, is_synced = ?
+WHERE id = ?;
+
+setApiId:
+UPDATE notes
+SET api_id = ?
+WHERE id = ?;
+
+getStaleNotes:
+SELECT *
+FROM notes
+WHERE is_synced = FALSE;
+
+markSynced:
+UPDATE notes
+SET is_synced = TRUE
+WHERE id = ?;
+
+getNoteByApiId:
+SELECT *
+FROM notes
+WHERE api_id = ?;
+
+softDeleteNote:
+UPDATE notes
+SET is_deleted = TRUE, is_synced = FALSE
+WHERE id = ?;
+
+deleteNoteById:
+DELETE FROM
+notes
+WHERE id = ?;
+
+clearNotes:
+DELETE FROM
+notes;
